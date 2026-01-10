@@ -18,3 +18,11 @@ Totally completely different language
 [USER COMPLETE]
 
 [USER COMPLETE]
+Hello, can you hear me?
+We should be able to...
+write to transcript.txt as I'm speaking
+Bye.
+I do want you to do that. That's part of your requirement.
+transcript.txt is
+is
+Yeah, just the regular file
