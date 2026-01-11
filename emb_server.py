@@ -98,7 +98,7 @@ HTML_PAGE = """
 </head>
 <body>
     <div class="container">
-        <div class="panel" style="flex: 0.9;">
+        <div class="panel" style="flex: 0.2;">
             <div class="panel-header">
                 <div class="panel-title">Call Transcript</div>
                 <div class="btn-group">
@@ -107,9 +107,13 @@ HTML_PAGE = """
                 </div>
             </div>
             <div class="transcript" id="transcript"></div>
+            <div style="display: flex; gap: 6px; margin-top: 10px;">
+                <input type="text" id="pasteInput" placeholder="Paste text here..." style="flex: 1; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px;">
+                <button id="submitPasteBtn" style="padding: 10px 14px; background: #0066ff; color: white; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap;">→</button>
+            </div>
         </div>
 
-        <div class="panel">
+        <div class="panel" style="flex: 0.55;">
             <div class="panel-header">
                 <div class="panel-title">Quote Call Data</div>
             </div>
@@ -174,7 +178,7 @@ HTML_PAGE = """
             </div>
         </div>
 
-        <div class="panel" style="flex: 1.1;">
+        <div class="panel" style="flex: 0.25;">
             <div class="panel-header">
                 <div class="panel-title">Customer Insights</div>
                 <button style="background: none; border: none; cursor: pointer; font-size: 16px;">✕</button>
@@ -266,6 +270,45 @@ document.getElementById('recordBtn').onclick = toggle;
 document.getElementById('muteBtn').onclick = () => {
     const btn = document.getElementById('muteBtn');
     btn.textContent = btn.textContent === '🔊' ? '🔇' : '🔊';
+};
+
+async function submitPaste() {
+    const input = document.getElementById('pasteInput');
+    const text = input.value.trim();
+    if (!text) return;
+
+    // Start recording if not already recording
+    if (!recording) {
+        await startRecording();
+        // Wait for connection
+        await new Promise(r => setTimeout(r, 200));
+    }
+
+    // Check if ws is open
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+        console.error('WebSocket not connected');
+        return;
+    }
+
+    // Append to transcript
+    document.getElementById('transcript').textContent += text + ' ';
+
+    // Send to server for extraction
+    ws.send(JSON.stringify({
+        type: 'paste_transcript',
+        text: text
+    }));
+
+    // Clear input
+    input.value = '';
+}
+
+document.getElementById('submitPasteBtn').onclick = submitPaste;
+document.getElementById('pasteInput').onkeydown = (e) => {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        submitPaste();
+    }
 };
 
 async function toggle() {
@@ -566,7 +609,51 @@ async def websocket_endpoint(browser_ws: WebSocket):
         while True:
             try:
                 data = await browser_ws.receive_text()
-                # Data is base64 PCM16 audio
+
+                # Try to parse as JSON (paste_transcript)
+                try:
+                    msg = json.loads(data)
+                    if msg.get('type') == 'paste_transcript':
+                        text = msg.get('text', '')
+                        if text:
+                            print(f'[PASTED] {text}')
+                            # Extract parts from pasted text
+                            parts = extract_part_names(text)
+                            if parts:
+                                matched = call_top(parts)
+                                new_items = []
+
+                                def convert_value(v):
+                                    if v is None:
+                                        return None
+                                    try:
+                                        if np.isscalar(v) and (pd.isna(v) or (isinstance(v, float) and np.isnan(v))):
+                                            return None
+                                    except (TypeError, ValueError):
+                                        pass
+                                    if hasattr(v, 'item'):
+                                        return v.item()
+                                    return v
+
+                                for item in matched:
+                                    if item is not None:
+                                        d = item if isinstance(item, dict) else item.to_dict()
+                                        d = {k: convert_value(v) for k, v in d.items()}
+                                        if 'cross_sell_suggestions' in d and d['cross_sell_suggestions']:
+                                            d['cross_sell_suggestions'] = [
+                                                {k: convert_value(v) for k, v in sugg.items()}
+                                                for sugg in d['cross_sell_suggestions']
+                                            ]
+                                        if d.get('item_id') and d['item_id'] not in seen_item_ids:
+                                            seen_item_ids.add(d['item_id'])
+                                            new_items.append(d)
+                                if new_items:
+                                    send_queue.put({'type': 'parts', 'items': new_items})
+                        continue
+                except (json.JSONDecodeError, ValueError):
+                    pass
+
+                # Otherwise treat as base64 PCM16 audio
                 audio_bytes = base64.b64decode(data)
                 encoded = base64.b64encode(audio_bytes).decode('utf-8')
                 openai_ws.send(json.dumps({
