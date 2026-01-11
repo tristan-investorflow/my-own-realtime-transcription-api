@@ -29,47 +29,217 @@ HTML_PAGE = """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Realtime Transcription</title>
+    <title>Parts Recognition</title>
     <style>
-        * { box-sizing: border-box; }
-        body { font-family: -apple-system, sans-serif; margin: 0; padding: 20px; display: flex; gap: 20px; height: 100vh; }
-        .panel { display: flex; flex-direction: column; }
-        #left { flex: 0 0 50%; }
-        #right { flex: 1; }
-        h3 { margin: 0 0 10px 0; }
-        button { padding: 12px 24px; font-size: 16px; cursor: pointer; margin-bottom: 10px; }
-        button.recording { background: #ff4444; color: white; }
-        #transcript { flex: 1; border: 1px solid #ccc; padding: 10px; overflow-y: auto; white-space: pre-wrap; font-size: 14px; background: #fafafa; }
-        #status { font-size: 12px; color: #666; margin-bottom: 5px; }
-        table { width: 100%; border-collapse: collapse; font-size: 13px; }
-        th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
-        th { background: #f0f0f0; }
-        #tableContainer { flex: 1; overflow-y: auto; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; color: #1a1a1a; }
+        .container { display: flex; height: 100vh; }
+        .panel { flex: 1; display: flex; flex-direction: column; background: white; border-right: 1px solid #e0e0e0; padding: 20px; overflow: hidden; }
+        .panel:last-child { border-right: none; }
+        .panel-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+        .panel-title { font-size: 15px; font-weight: 600; }
+        .btn-group { display: flex; gap: 6px; }
+        .btn-icon { width: 32px; height: 32px; border: 1px solid #ddd; border-radius: 6px; background: white; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 14px; transition: all 0.2s; }
+        .btn-icon:hover { background: #f5f5f5; border-color: #999; }
+        .btn-icon.recording { background: #ffe0e0; border-color: #ff4444; }
+        .transcript { flex: 1; border: 1px solid #e0e0e0; border-radius: 6px; padding: 14px; overflow-y: auto; font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
+        .transcript:empty::before { content: 'Transcript will appear here...'; color: #999; }
+        .form-section { margin-bottom: 20px; }
+        .form-label { font-size: 11px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; display: block; }
+        .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+        .form-row.full { grid-template-columns: 1fr; }
+        input, select { width: 100%; padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 13px; font-family: inherit; }
+        input:focus, select:focus { outline: none; border-color: #0066ff; background: #f9fbff; }
+        input::placeholder { color: #999; }
+        .table-section { flex: 1; display: flex; flex-direction: column; }
+        .table-wrapper { flex: 1; overflow: hidden; display: flex; flex-direction: column; border: 1px solid #e0e0e0; border-radius: 6px; }
+        .table-header { display: grid; grid-template-columns: 1.2fr 1.5fr 1.2fr 0.8fr; gap: 12px; padding: 12px 14px; background: #f9f9f9; border-bottom: 1px solid #e0e0e0; font-size: 11px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 0.5px; }
+        .table-scroll { flex: 1; overflow-y: auto; }
+        .table-row { display: grid; grid-template-columns: 1.2fr 1.5fr 1.2fr 0.8fr; gap: 12px; padding: 12px 14px; border-bottom: 1px solid #f0f0f0; align-items: center; font-size: 13px; }
+        .table-row:hover { background: #fafafa; }
+        .item-id { font-family: monospace; font-weight: 600; color: #0066ff; }
+        .insights-section { display: flex; flex-direction: column; gap: 16px; overflow-y: auto; }
+        .insight-box { padding: 14px; background: #f9f9f9; border-radius: 6px; }
+        .insight-header { font-size: 11px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+        .insight-title { font-size: 14px; font-weight: 600; color: #1a1a1a; margin-bottom: 4px; }
+        .insight-desc { font-size: 12px; color: #666; margin-bottom: 8px; }
+        .insight-metrics { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; font-size: 11px; }
+        .metric-item { }
+        .metric-val { font-size: 13px; font-weight: 600; color: #1a1a1a; }
+        .metric-label { color: #999; font-size: 10px; }
+        .highlight-red { color: #d32f2f; }
+        .alert-box { background: #ffebee; border-left: 4px solid #d32f2f; padding: 12px; border-radius: 4px; margin-bottom: 16px; }
+        .alert-title { font-weight: 600; color: #d32f2f; margin-bottom: 4px; }
+        .alert-desc { font-size: 12px; color: #666; }
+        .product-item { display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #eee; }
+        .product-item:last-child { border-bottom: none; }
+        .product-name { font-weight: 600; font-size: 13px; }
+        .product-detail { font-size: 11px; color: #999; margin-top: 2px; }
+        .product-price { font-weight: 600; font-size: 13px; }
+        .product-qty { font-size: 11px; color: #999; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #ddd; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #bbb; }
     </style>
 </head>
 <body>
-    <div id="left" class="panel">
-        <button id="btn">Start Recording</button>
-        <div id="status">Ready</div>
-        <h3>Transcript</h3>
-        <div id="transcript"></div>
-    </div>
-    <div id="right" class="panel">
-        <h3>Matched Parts</h3>
-        <div id="tableContainer">
-            <table>
-                <thead><tr><th>Item ID</th><th>Description</th><th>Manufacturer</th></tr></thead>
-                <tbody id="tbody"></tbody>
-            </table>
+    <div class="container">
+        <div class="panel" style="flex: 0.9;">
+            <div class="panel-header">
+                <div class="panel-title">Call Transcript</div>
+                <div class="btn-group">
+                    <button class="btn-icon" id="muteBtn" title="Mute">🔊</button>
+                    <button class="btn-icon" id="recordBtn" title="Record">●</button>
+                </div>
+            </div>
+            <div class="transcript" id="transcript"></div>
+        </div>
+
+        <div class="panel">
+            <div class="panel-header">
+                <div class="panel-title">Quote Call Data</div>
+            </div>
+
+            <div class="form-section">
+                <label class="form-label">Company Name</label>
+                <div class="form-row">
+                    <input type="text" placeholder="Company" value="ABC Supply">
+                    <div style="display: flex; align-items: center; gap: 8px;"><span style="color: #0066ff; cursor: pointer;">↗</span></div>
+                </div>
+            </div>
+
+            <div class="form-section">
+                <div class="form-row">
+                    <div>
+                        <label class="form-label">Associate Name</label>
+                        <input type="text" placeholder="Name" value="Reed">
+                    </div>
+                    <div>
+                        <label class="form-label">PO Number</label>
+                        <input type="text" placeholder="—">
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-section">
+                <div class="form-row full">
+                    <label class="form-label">Email</label>
+                    <input type="text" placeholder="—">
+                </div>
+                <div class="form-row full">
+                    <label class="form-label">Address</label>
+                    <input type="text" placeholder="—">
+                </div>
+            </div>
+
+            <div class="table-section">
+                <label class="form-label" style="margin-bottom: 8px;">Items</label>
+                <div class="table-wrapper">
+                    <div class="table-header">
+                        <div>Item</div>
+                        <div>Catalog Match</div>
+                        <div>Cross/Up Sell</div>
+                        <div>Qty</div>
+                    </div>
+                    <div class="table-scroll" id="tbody"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="panel" style="flex: 1.1;">
+            <div class="panel-header">
+                <div class="panel-title">Customer Insights</div>
+                <button style="background: none; border: none; cursor: pointer; font-size: 16px;">✕</button>
+            </div>
+
+            <div class="insights-section">
+                <div style="padding: 8px 0; border-bottom: 1px solid #e0e0e0; margin-bottom: 8px;">
+                    <div style="font-size: 12px; font-weight: 600; color: #666;">ABC SUPPLY</div>
+                </div>
+
+                <div class="alert-box">
+                    <div class="alert-title">$ High Price Sensitivity</div>
+                    <div class="alert-desc">Negotiates aggressively on price</div>
+                    <div style="margin-top: 8px; font-size: 11px;">
+                        <span>Customer: 21.2%</span> <span style="margin-left: 12px;">Avg: 29.4%</span> <span style="margin-left: 12px; color: #d32f2f;">-8.3%</span>
+                    </div>
+                </div>
+
+                <div class="insight-box">
+                    <div class="insight-header">KEY METRICS</div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                        <div>
+                            <div class="metric-label">Total Revenue</div>
+                            <div class="metric-val">$5,403,312.42</div>
+                        </div>
+                        <div>
+                            <div class="metric-label">Gross Profit</div>
+                            <div class="metric-val">$1,143,517.02</div>
+                        </div>
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 12px;">
+                        <div>
+                            <div class="metric-label">Margin</div>
+                            <div class="metric-val">21.2%</div>
+                        </div>
+                        <div>
+                            <div class="metric-label">Total Orders</div>
+                            <div class="metric-val">636</div>
+                        </div>
+                    </div>
+                    <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e0e0e0; font-size: 11px; color: #666;">📅 Last order 99 days ago</div>
+                </div>
+
+                <div class="insight-box">
+                    <div class="insight-header">MOST COMMON PRODUCTS</div>
+                    <div class="product-item">
+                        <div>
+                            <div class="product-name">18PG</div>
+                            <div class="product-detail">1X 18' FLYGEM TRIM</div>
+                        </div>
+                        <div style="text-align: right;">
+                            <div class="product-price">$732,340.80</div>
+                            <div class="product-qty">Qty: 14544</div>
+                        </div>
+                    </div>
+                    <div class="product-item">
+                        <div>
+                            <div class="product-name">110PG</div>
+                            <div class="product-detail">1X10 18' FLYGEM TRIM</div>
+                        </div>
+                        <div style="text-align: right;">
+                            <div class="product-price">$474,946.66</div>
+                            <div class="product-qty">Qty: 7358</div>
+                        </div>
+                    </div>
+                    <div class="product-item">
+                        <div>
+                            <div class="product-name">544PCJPC</div>
+                            <div class="product-detail">5/4X4 16' J-POCKET CSG WINF PLY...</div>
+                        </div>
+                        <div style="text-align: right;">
+                            <div class="product-price">$471,328.08</div>
+                            <div class="product-qty">Qty: 7898</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 <script>
 const SAMPLE_RATE = 24000;
 let ws, audioContext, processor, source, stream;
 let recording = false;
+let matchCount = 0;
+let startTime = 0;
 const seenIds = new Set();
 
-document.getElementById('btn').onclick = toggle;
+document.getElementById('recordBtn').onclick = toggle;
+document.getElementById('muteBtn').onclick = () => {
+    const btn = document.getElementById('muteBtn');
+    btn.textContent = btn.textContent === '🔊' ? '🔇' : '🔊';
+};
 
 async function toggle() {
     if (!recording) {
@@ -83,72 +253,85 @@ async function startRecording() {
     document.getElementById('transcript').textContent = '';
     document.getElementById('tbody').innerHTML = '';
     seenIds.clear();
-    document.getElementById('status').textContent = 'Connecting...';
+    document.getElementById('recordBtn').classList.add('recording');
 
-    // Connect WebSocket first
-    ws = new WebSocket('ws://' + location.host + '/ws');
+    try {
+        ws = new WebSocket('ws://' + location.host + '/ws');
 
-    await new Promise((resolve, reject) => {
-        ws.onopen = resolve;
-        ws.onerror = reject;
-        setTimeout(() => reject(new Error('Connection timeout')), 5000);
-    });
+        await new Promise((resolve, reject) => {
+            ws.onopen = resolve;
+            ws.onerror = reject;
+            setTimeout(() => reject(new Error('Timeout')), 5000);
+        });
 
-    ws.onmessage = (e) => {
-        const msg = JSON.parse(e.data);
-        if (msg.type === 'transcript') {
-            document.getElementById('transcript').textContent += msg.text;
-        } else if (msg.type === 'parts') {
-            const tbody = document.getElementById('tbody');
-            msg.items.forEach(item => {
-                if (item && item.item_id && !seenIds.has(item.item_id)) {
-                    seenIds.add(item.item_id);
-                    const row = tbody.insertRow();
-                    row.insertCell(0).textContent = item.item_id;
-                    row.insertCell(1).textContent = item.description || '';
-                    row.insertCell(2).textContent = item.manufacturer_name || '';
-                }
-            });
-        }
-    };
+        ws.onmessage = (e) => {
+            const msg = JSON.parse(e.data);
+            if (msg.type === 'transcript') {
+                document.getElementById('transcript').textContent += msg.text;
+            } else if (msg.type === 'parts') {
+                const tbody = document.getElementById('tbody');
+                msg.items.forEach(item => {
+                    if (item && item.item_id && !seenIds.has(item.item_id)) {
+                        seenIds.add(item.item_id);
+                        const row = document.createElement('div');
+                        row.className = 'table-row';
 
-    ws.onclose = () => {
-        if (recording) stopRecording();
-        document.getElementById('status').textContent = 'Disconnected';
-    };
+                        const id = document.createElement('div');
+                        id.className = 'item-id';
+                        id.textContent = item.item_id;
 
-    // Get microphone with specific sample rate
-    stream = await navigator.mediaDevices.getUserMedia({
-        audio: { sampleRate: SAMPLE_RATE, channelCount: 1, echoCancellation: false }
-    });
+                        const desc = document.createElement('div');
+                        desc.textContent = item.description || '';
 
-    audioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
-    source = audioContext.createMediaStreamSource(stream);
+                        const mfg = document.createElement('div');
+                        mfg.textContent = item.manufacturer_name || '';
 
-    // ScriptProcessor to get raw samples (deprecated but widely supported)
-    processor = audioContext.createScriptProcessor(4096, 1, 1);
-    processor.onaudioprocess = (e) => {
-        if (!recording || ws.readyState !== WebSocket.OPEN) return;
+                        const qty = document.createElement('div');
+                        qty.textContent = item.quantity || '1';
 
-        const float32 = e.inputBuffer.getChannelData(0);
-        // Convert Float32 [-1,1] to Int16 PCM
-        const int16 = new Int16Array(float32.length);
-        for (let i = 0; i < float32.length; i++) {
-            int16[i] = Math.max(-32768, Math.min(32767, Math.floor(float32[i] * 32768)));
-        }
-        // Send as base64
-        const bytes = new Uint8Array(int16.buffer);
-        const b64 = btoa(String.fromCharCode.apply(null, bytes));
-        ws.send(b64);
-    };
+                        row.appendChild(id);
+                        row.appendChild(desc);
+                        row.appendChild(mfg);
+                        row.appendChild(qty);
+                        tbody.insertBefore(row, tbody.firstChild);
+                    }
+                });
+            }
+        };
 
-    source.connect(processor);
-    processor.connect(audioContext.destination);
+        ws.onclose = () => {
+            if (recording) stopRecording();
+        };
 
-    recording = true;
-    document.getElementById('btn').textContent = 'Stop Recording';
-    document.getElementById('btn').classList.add('recording');
-    document.getElementById('status').textContent = 'Recording... speak now';
+        stream = await navigator.mediaDevices.getUserMedia({
+            audio: { sampleRate: SAMPLE_RATE, channelCount: 1, echoCancellation: false }
+        });
+
+        audioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
+        source = audioContext.createMediaStreamSource(stream);
+        processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+        processor.onaudioprocess = (e) => {
+            if (!recording || ws.readyState !== WebSocket.OPEN) return;
+            const float32 = e.inputBuffer.getChannelData(0);
+            const int16 = new Int16Array(float32.length);
+            for (let i = 0; i < float32.length; i++) {
+                int16[i] = Math.max(-32768, Math.min(32767, Math.floor(float32[i] * 32768)));
+            }
+            const bytes = new Uint8Array(int16.buffer);
+            const b64 = btoa(String.fromCharCode.apply(null, bytes));
+            ws.send(b64);
+        };
+
+        source.connect(processor);
+        processor.connect(audioContext.destination);
+
+        recording = true;
+        startTime = Date.now();
+    } catch (err) {
+        console.error(err);
+        document.getElementById('recordBtn').classList.remove('recording');
+    }
 }
 
 function stopRecording() {
@@ -158,9 +341,7 @@ function stopRecording() {
     if (audioContext) { audioContext.close(); audioContext = null; }
     if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
     if (ws) { ws.close(); ws = null; }
-    document.getElementById('btn').textContent = 'Start Recording';
-    document.getElementById('btn').classList.remove('recording');
-    document.getElementById('status').textContent = 'Stopped';
+    document.getElementById('recordBtn').classList.remove('recording');
 }
 </script>
 </body>
@@ -231,6 +412,8 @@ async def websocket_endpoint(browser_ws: WebSocket):
                                     for item in matched:
                                         if item is not None:
                                             d = item.to_dict() if hasattr(item, 'to_dict') else item
+                                            # Convert NaN to None for JSON compatibility
+                                            d = {k: (None if pd.isna(v) else v) for k, v in d.items()}
                                             if d.get('item_id') and d['item_id'] not in seen_item_ids:
                                                 seen_item_ids.add(d['item_id'])
                                                 new_items.append(d)
@@ -371,6 +554,6 @@ def map_results_to_resolution_prompt(row_of_ixs: List[int], item_name: str):
 
     {df.iloc[row_of_ixs].reset_index(drop=True).reset_index().to_json(orient='records',indent=4)}
 
-    If one of them are what the user asked for, output its index as an int, 0-9. Otherwise, output the string "NONE". E.g., the user could have said "two-and-a-half inch fire lock T", and that would match "2 1/2 FIRELOCK TEE", so if it had index=5, you would output 5. Please don't output an index unless there is a strong semantic match. Other examples: query "three-quarter inch chrome up cut chin" would match "3/4 Chrome Cup 401 Escutcheon" because they sound the same (transcription isn't perfect), query "half-inch gate valve whole part" would match "1/2 BRZ GATE VLV TE FULL PRT". One bug that you run into is matching user query "b" to part name "2 1\\/2 FIRELOCK TEE", which doesn't make sense, don't do that.
+    If one of them are what the user asked for, output its index as an int, 0-9. Otherwise, output the string "NONE". E.g., the user could have said "two-and-a-half inch fire lock T", and that would match "2 1/2 FIRELOCK TEE", so if it had index=5, you would output 5. Please don't output an index unless there is a strong semantic match. Other examples: query "three-quarter inch chrome up cut chin" would match "3/4 Chrome Cup 401 Escutcheon" because they sound the same (transcription isn't perfect), query "half-inch gate valve whole part" would match "1/2 BRZ GATE VLV TE FULL PRT". One bug that you run into is matching user query "b" to part name "2 1\\/2 FIRELOCK TEE", which doesn't make sense, don't do that. Another false positive you made was that the user said "any free system 6x2" and you matched "SIGN - BLANK 6 X 2", nice job on the 6x2 but the rest doesn't match enough.
     """
     return prompt
