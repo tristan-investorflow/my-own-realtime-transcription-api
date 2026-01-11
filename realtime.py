@@ -4,6 +4,7 @@ import os
 import queue
 import threading
 import time
+import urllib.request
 import pyaudio
 import websocket
 
@@ -18,6 +19,7 @@ RATE = 24000
 FORMAT = pyaudio.paInt16
 
 mic_queue = queue.Queue()
+extract_queue = queue.Queue()
 stop_event = threading.Event()
 
 
@@ -53,12 +55,15 @@ def receive_messages(ws):
                 delta = data.get('delta', '')
                 with open('transcript.txt', 'a') as f:
                     f.write(delta)
-                print(delta, end='', flush=True)
+                # print(delta, end='', flush=True)
+                # print("IS DELTA")
+                extract_queue.put(1)
 
             elif event_type == 'conversation.item.input_audio_transcription.completed':
                 with open('transcript.txt', 'a') as f:
                     f.write('\n')
-                print()
+                # print()
+                # print("IS COMPLETED")
 
         except Exception as e:
             print(f'Receive error: {e}')
@@ -82,6 +87,78 @@ def send_session_config(ws):
         }
     }
     ws.send(json.dumps(config))
+
+
+def extract_parts():
+    while not stop_event.is_set():
+        try:
+            extract_queue.get(timeout=1)
+        except queue.Empty:
+            continue
+
+        # Drain the queue
+        while not extract_queue.empty():
+            try:
+                extract_queue.get_nowait()
+            except queue.Empty:
+                break
+
+        # Read full transcript
+        try:
+            with open('transcript.txt', 'r') as f:
+                transcript = f.read()
+        except FileNotFoundError:
+            continue
+
+        if not transcript.strip():
+            continue
+
+        # Query gpt-4o-mini for part names
+        req_body = json.dumps({
+            "model": "gpt-4o-mini-2024-07-18",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": """We are a manufacturer taking orders over the phone. Extract names of parts we manufacture from the transcript. Return only a JSON array of strings, no backticks or markdown. Example: [\"part1\", \"part2\"]. Examples of part names we have follow.
+A7084 1-1/2 S10 304SS FLG NPL
+2X2X1/2   6000 FS THRD TEE
+2 FIRELOCK 90 ELBOW
+5 FIRELOCK 90 ELBOW
+PSM-1/6 REMOTE ACCESS
+ANGLE WALL POST KIT FIG 551
+OIL BREATHER
+1/2" LIQUID RELIEF VALVE
+POP-SAFETY VALVE 1/4 NPT
+2 1/2 FIRELOCK TEE
+ANGLE WALL POST KIT FIG 551 B
+QUICK CK BARBED ADPTR W/TUBING
+ANGLE WALL POST KIT FIG 551 B
+8 FIRELOCK 45 ELBOW
+2 FLEX GRV COUPLING"""
+                },
+                {
+                    "role": "user",
+                    "content": transcript
+                }
+            ]
+        }).encode('utf-8')
+
+        req = urllib.request.Request(
+            'https://api.openai.com/v1/chat/completions',
+            data=req_body,
+            headers={
+                'Authorization': f'Bearer {API_KEY}',
+                'Content-Type': 'application/json'
+            }
+        )
+
+        try:
+            with urllib.request.urlopen(req) as resp:
+                result = json.loads(resp.read().decode('utf-8'))
+                parts = result['choices'][0]['message']['content']
+                print(f'\n[PARTS] {parts}\n')
+        except Exception as e:
+            print(f'Extract error: {e}')
 
 
 def main():
@@ -110,6 +187,9 @@ def main():
 
         send_thread = threading.Thread(target=send_mic_audio, args=(ws,))
         send_thread.start()
+
+        extract_thread = threading.Thread(target=extract_parts)
+        extract_thread.start()
 
         mic_stream.start_stream()
 
