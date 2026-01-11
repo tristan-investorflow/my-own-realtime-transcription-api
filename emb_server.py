@@ -17,9 +17,11 @@ API_KEY = os.getenv("OPENAI_API_KEY")
 WS_URL = 'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01'
 
 with open('embs_subset.json') as f:
+# with open('embs.json') as f:
     embs = json.load(f)
 embs_arr = np.array(embs)
 df = pd.read_csv('df_subset.csv')
+# df = pd.read_csv('df_full.csv')
 
 app = FastAPI()
 
@@ -53,11 +55,22 @@ HTML_PAGE = """
         input::placeholder { color: #999; }
         .table-section { flex: 1; display: flex; flex-direction: column; }
         .table-wrapper { flex: 1; overflow: hidden; display: flex; flex-direction: column; border: 1px solid #e0e0e0; border-radius: 6px; }
-        .table-header { display: grid; grid-template-columns: 1.2fr 1.5fr 1.2fr 0.8fr; gap: 12px; padding: 12px 14px; background: #f9f9f9; border-bottom: 1px solid #e0e0e0; font-size: 11px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 0.5px; }
-        .table-scroll { flex: 1; overflow-y: auto; }
-        .table-row { display: grid; grid-template-columns: 1.2fr 1.5fr 1.2fr 0.8fr; gap: 12px; padding: 12px 14px; border-bottom: 1px solid #f0f0f0; align-items: center; font-size: 13px; }
+        .table-header { display: grid; grid-template-columns: 1.2fr 0.8fr 1.5fr 1.2fr 1fr 0.6fr; gap: 12px; padding: 12px 14px; background: #f9f9f9; border-bottom: 1px solid #e0e0e0; font-size: 11px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 0.5px; }
+        .table-scroll { flex: 1; overflow-y: auto; position: relative; }
+        .table-row { display: grid; grid-template-columns: 1.2fr 0.8fr 1.5fr 1.2fr 1fr 0.6fr; gap: 12px; padding: 12px 14px; border-bottom: 1px solid #f0f0f0; align-items: center; font-size: 13px; position: relative; }
         .table-row:hover { background: #fafafa; }
+        .item-name { font-weight: 500; }
         .item-id { font-family: monospace; font-weight: 600; color: #0066ff; }
+        .cross-sell-indicator { cursor: pointer; color: #0066ff; text-decoration: underline; }
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center; }
+        .modal.show { display: flex; }
+        .modal-content { background: white; border-radius: 8px; padding: 24px; max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+        .modal-title { font-size: 16px; font-weight: 600; margin-bottom: 16px; }
+        .modal-table { display: grid; grid-template-columns: 1fr 2fr; gap: 12px; }
+        .modal-header { display: grid; grid-template-columns: 1fr 2fr; gap: 12px; padding-bottom: 8px; border-bottom: 1px solid #e0e0e0; font-size: 11px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+        .modal-row { display: contents; }
+        .modal-row-data { display: grid; grid-template-columns: 1fr 2fr; gap: 12px; padding: 8px 0; border-bottom: 1px solid #f0f0f0; align-items: center; }
+        .modal-row-data:last-child { border-bottom: none; }
         .insights-section { display: flex; flex-direction: column; gap: 16px; overflow-y: auto; }
         .insight-box { padding: 14px; background: #f9f9f9; border-radius: 6px; }
         .insight-header { font-size: 11px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
@@ -138,11 +151,25 @@ HTML_PAGE = """
                 <div class="table-wrapper">
                     <div class="table-header">
                         <div>Item</div>
+                        <div>Item ID</div>
                         <div>Catalog Match</div>
                         <div>Cross/Up Sell</div>
+                        <div>Manufacturer</div>
                         <div>Qty</div>
                     </div>
                     <div class="table-scroll" id="tbody"></div>
+                </div>
+            </div>
+
+            <!-- Cross/Upsell Modal -->
+            <div class="modal" id="crossSellModal">
+                <div class="modal-content">
+                    <div class="modal-title" id="modalTitle">Cross/Up Sell Suggestions</div>
+                    <div class="modal-header">
+                        <div>Item ID</div>
+                        <div>Catalog Match</div>
+                    </div>
+                    <div id="modalBody"></div>
                 </div>
             </div>
         </div>
@@ -249,6 +276,35 @@ async function toggle() {
     }
 }
 
+function showCrossSellModal(itemName, suggestions) {
+    document.getElementById('modalTitle').textContent = `Cross/Up Sell Suggestions for ${itemName}`;
+    const modalBody = document.getElementById('modalBody');
+    modalBody.innerHTML = '';
+    suggestions.forEach(sugg => {
+        const row = document.createElement('div');
+        row.className = 'modal-row-data';
+
+        const id = document.createElement('div');
+        id.className = 'item-id';
+        id.textContent = sugg.item_id || '';
+
+        const desc = document.createElement('div');
+        desc.textContent = sugg.description || '';
+
+        row.appendChild(id);
+        row.appendChild(desc);
+        modalBody.appendChild(row);
+    });
+    document.getElementById('crossSellModal').classList.add('show');
+}
+
+// Close modal on click outside
+document.getElementById('crossSellModal').onclick = (e) => {
+    if (e.target === document.getElementById('crossSellModal')) {
+        document.getElementById('crossSellModal').classList.remove('show');
+    }
+};
+
 async function startRecording() {
     document.getElementById('transcript').textContent = '';
     document.getElementById('tbody').innerHTML = '';
@@ -276,21 +332,43 @@ async function startRecording() {
                         const row = document.createElement('div');
                         row.className = 'table-row';
 
-                        const id = document.createElement('div');
-                        id.className = 'item-id';
-                        id.textContent = item.item_id;
+                        // Column 1: Item (part_name from transcript)
+                        const itemName = document.createElement('div');
+                        itemName.className = 'item-name';
+                        itemName.textContent = item.part_name || '';
 
+                        // Column 2: Item ID
+                        const itemId = document.createElement('div');
+                        itemId.className = 'item-id';
+                        itemId.textContent = item.item_id;
+
+                        // Column 3: Catalog Match (description)
                         const desc = document.createElement('div');
                         desc.textContent = item.description || '';
 
+                        // Column 4: Cross/Up Sell
+                        const crossSell = document.createElement('div');
+                        if (item.cross_sell_suggestions && item.cross_sell_suggestions.length > 0) {
+                            const firstSugg = item.cross_sell_suggestions[0];
+                            const link = document.createElement('span');
+                            link.className = 'cross-sell-indicator';
+                            link.textContent = (firstSugg.item_id || '') + (item.cross_sell_suggestions.length > 1 ? ` (+${item.cross_sell_suggestions.length - 1})` : '');
+                            link.onclick = () => showCrossSellModal(item.part_name, item.cross_sell_suggestions);
+                            crossSell.appendChild(link);
+                        }
+
+                        // Column 5: Manufacturer
                         const mfg = document.createElement('div');
                         mfg.textContent = item.manufacturer_name || '';
 
+                        // Column 6: Qty
                         const qty = document.createElement('div');
                         qty.textContent = item.quantity || '1';
 
-                        row.appendChild(id);
+                        row.appendChild(itemName);
+                        row.appendChild(itemId);
                         row.appendChild(desc);
+                        row.appendChild(crossSell);
                         row.appendChild(mfg);
                         row.appendChild(qty);
                         tbody.insertBefore(row, tbody.firstChild);
@@ -409,11 +487,32 @@ async def websocket_endpoint(browser_ws: WebSocket):
                                 if parts:
                                     matched = call_top(parts)
                                     new_items = []
+                                    def convert_value(v):
+                                        """Convert numpy/pandas types and NaN to JSON-compatible values"""
+                                        if v is None:
+                                            return None
+                                        # Check if it's a numpy or pandas scalar
+                                        try:
+                                            if np.isscalar(v) and (pd.isna(v) or (isinstance(v, float) and np.isnan(v))):
+                                                return None
+                                        except (TypeError, ValueError):
+                                            pass
+                                        # Convert numpy types to Python native types
+                                        if hasattr(v, 'item'):  # numpy scalar
+                                            return v.item()
+                                        return v
+
                                     for item in matched:
                                         if item is not None:
                                             d = item if isinstance(item, dict) else item.to_dict()
                                             # Convert NaN to None for JSON compatibility
-                                            d = {k: (None if pd.isna(v) else v) for k, v in d.items()}
+                                            d = {k: convert_value(v) for k, v in d.items()}
+                                            # Also convert NaN in cross_sell_suggestions
+                                            if 'cross_sell_suggestions' in d and d['cross_sell_suggestions']:
+                                                d['cross_sell_suggestions'] = [
+                                                    {k: convert_value(v) for k, v in sugg.items()}
+                                                    for sugg in d['cross_sell_suggestions']
+                                                ]
                                             if d.get('item_id') and d['item_id'] not in seen_item_ids:
                                                 seen_item_ids.add(d['item_id'])
                                                 new_items.append(d)
@@ -513,6 +612,8 @@ def extract_part_names(transcript: str):
 
 def call_top(parts_with_qty: list, k: int = 10):
     """Call the top matching logic with part names and quantities"""
+    import random
+
     # Extract just the part names for embedding
     item_names = [p['part_name'] for p in parts_with_qty]
     quantities = [p.get('quantity', 1) for p in parts_with_qty]
@@ -531,12 +632,24 @@ def call_top(parts_with_qty: list, k: int = 10):
                      for i, z in enumerate(postprocessed)]
     matched_df_rows = [df.iloc[z] if z is not None else None for z in indices_in_df]
 
-    # Add quantity to each matched row
+    # Add quantity and cross/upsell suggestions to each matched row
     result = []
-    for row, qty in zip(matched_df_rows, quantities):
+    for part_name, row, qty in zip(item_names, matched_df_rows, quantities):
         if row is not None:
             row_dict = row.to_dict() if hasattr(row, 'to_dict') else row
+            row_dict['part_name'] = part_name  # Original transcript part name
             row_dict['quantity'] = qty
+
+            # Generate cross/upsell suggestions: 2-5 random parts
+            num_suggestions = random.randint(2, 5)
+            random_indices = np.random.choice(len(df), size=num_suggestions, replace=False)
+            cross_sell_rows = []
+            for idx in random_indices:
+                sugg_row = df.iloc[idx]
+                sugg_dict = sugg_row.to_dict() if hasattr(sugg_row, 'to_dict') else sugg_row
+                cross_sell_rows.append(sugg_dict)
+            row_dict['cross_sell_suggestions'] = cross_sell_rows
+
             result.append(row_dict)
         else:
             result.append(None)
@@ -574,6 +687,6 @@ def map_results_to_resolution_prompt(row_of_ixs: List[int], item_name: str):
 
     {df.iloc[row_of_ixs].reset_index(drop=True).reset_index().to_json(orient='records',indent=4)}
 
-    If one of them are what the user asked for, output its index as an int, 0-9. Otherwise, output the string "NONE". E.g., the user could have said "two-and-a-half inch fire lock T", and that would match "2 1/2 FIRELOCK TEE", so if it had index=5, you would output 5. Please don't output an index unless there is a strong semantic match. Other examples: query "three-quarter inch chrome up cut chin" would match "3/4 Chrome Cup 401 Escutcheon" because they sound the same (transcription isn't perfect), query "half-inch gate valve whole part" would match "1/2 BRZ GATE VLV TE FULL PRT". One bug that you run into is matching user query "b" to part name "2 1\\/2 FIRELOCK TEE", which doesn't make sense, don't do that. Another false positive you made was that the user said "any free system 6x2" and you matched "SIGN - BLANK 6 X 2", nice job on the 6x2 but the rest doesn't match enough. Here is another error that you made. The transcript said "I want an antifreeze system, six by two. I want two antifreeze systems, five by seven" and you extracted part_name=antifreeze system quantity=2 and part_name=antifreeze system quantity=1, but really you should have included the 6X2 and 5X7 in the part names.
+    If one of them are what the user asked for, output its index as an int, 0-9. Otherwise, output the string "NONE". E.g., the user could have said "two-and-a-half inch fire lock T", and that would match "2 1/2 FIRELOCK TEE", so if it had index=5, you would output 5. Please don't output an index unless there is a strong semantic match. Other examples: query "three-quarter inch chrome up cut chin" would match "3/4 Chrome Cup 401 Escutcheon" because they sound the same (transcription isn't perfect), query "half-inch gate valve whole part" would match "1/2 BRZ GATE VLV TE FULL PRT". One bug that you run into is matching user query "b" to part name "2 1\\/2 FIRELOCK TEE", which doesn't make sense, don't do that. Another false positive you made was that the user said "any free system 6x2" and you matched "SIGN - BLANK 6 X 2", nice job on the 6x2 but the rest doesn't match enough. Here is another error that you made. The transcript said "I want an antifreeze system, six by two. I want two antifreeze systems, five by seven" and you extracted part_name=antifreeze system quantity=2 and part_name=antifreeze system quantity=1, but really you should have included the 6X2 and 5X7 in the part names. Here's another error, the transcript said "I wonder if I can have...21 over 2 inch, 2000 SS, LF, Aussie, FXG", though that was the customer trying to describe 21/2" 2000SS LF OSY FXG, so as you can see, the transcript will often include commas in between words, because part numbers are compound, and unlike normal language, but you should look past this, and if a series of words with commas in between looks like it should be one part, try to only extract one part.
     """
     return prompt
