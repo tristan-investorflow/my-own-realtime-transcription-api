@@ -15,19 +15,21 @@ from fastapi import FastAPI
 app=FastAPI()
 
 @app.post("/top")
-async def top(item_name:List[str],k:int=10):
-    embs_query=embs_arr[0:4,:].T#Replace with embedding.
+async def top(item_names:List[str],k:int=10):
+    embs_query=np.array(embed(item_names)).T
     scores=embs_arr@embs_query
     top_indices=np.argpartition(scores, -k,axis=0)[-k:]
-    return top_indices
+    prompts=[map_results_to_resolution_prompt(top_indices[:,i].tolist(),item_names[i]) for i in range(len(item_names))]
+    responses=[client.chat.completions.create(model='gpt-4o-mini',messages=[{'role':'system','content':prompt}]).choices[0].message.content
+               for prompt in prompts
+               ]
+    postprocessed=[try_parse_int(z) for z in responses]
+    # return responses,postprocessed,prompts
+    indices_in_df=[int(top_indices[z,i]) if z!=None else None for i,z in enumerate(postprocessed)]
+    matched_df_rows=[df.iloc[z] if z!=None else None for z in indices_in_df]
+    return matched_df_rows
 
 def top_test(item_names:List[str],k:int=10):
-    # emb=embs_arr[0,:]#Replace with embedding.
-    # scores=embs_arr@emb
-    # top_indices=np.argpartition(scores, -k)[-k:]
-    # df_top=df.iloc[top_indices]
-    # return df_top
-    # embs_query=embs_arr[0:len(item_names),:].T#Replace with embedding.
     embs_query=np.array(embed(item_names)).T
     scores=embs_arr@embs_query
     top_indices=np.argpartition(scores, -k,axis=0)[-k:]
@@ -65,4 +67,4 @@ def map_results_to_resolution_prompt(row_of_ixs:List[int],item_name:str):
 
 
 # print(top_test(['7060 for partitioned grooved T','a','b','ten wafer butterfly valve with switch']))
-print(top_test(['7012 eight partitioned gasket flange','Two-by-two-by-one 6000 first third T']))
+# print(top_test(['7012 eight partitioned gasket flange','Two-by-two-by-one 6000 first third T']))
