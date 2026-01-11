@@ -98,7 +98,7 @@ HTML_PAGE = """
 </head>
 <body>
     <div class="container">
-        <div class="panel" style="flex: 0.2;">
+        <div class="panel" id="transcriptPanel" style="flex: 0.2;">
             <div class="panel-header">
                 <div class="panel-title">Call Transcript</div>
                 <div class="btn-group">
@@ -113,7 +113,7 @@ HTML_PAGE = """
             </div>
         </div>
 
-        <div class="panel" style="flex: 0.55;">
+        <div class="panel" id="quotePanel" style="flex: 0.8;">
             <div class="panel-header">
                 <div class="panel-title">Quote Call Data</div>
             </div>
@@ -121,7 +121,7 @@ HTML_PAGE = """
             <div class="form-section">
                 <label class="form-label">Company Name</label>
                 <div class="form-row">
-                    <input type="text" placeholder="Company" value="ABC Supply">
+                    <input type="text" id="companyNameInput" placeholder="Company">
                     <div style="display: flex; align-items: center; gap: 8px;"><span style="color: #0066ff; cursor: pointer;">↗</span></div>
                 </div>
             </div>
@@ -130,11 +130,11 @@ HTML_PAGE = """
                 <div class="form-row">
                     <div>
                         <label class="form-label">Associate Name</label>
-                        <input type="text" placeholder="Name" value="Reed">
+                        <input type="text" id="associateNameInput" placeholder="Name">
                     </div>
                     <div>
                         <label class="form-label">PO Number</label>
-                        <input type="text" placeholder="—">
+                        <input type="text" id="poNumberInput" placeholder="—">
                     </div>
                 </div>
             </div>
@@ -142,11 +142,11 @@ HTML_PAGE = """
             <div class="form-section">
                 <div class="form-row full">
                     <label class="form-label">Email</label>
-                    <input type="text" placeholder="—">
+                    <input type="text" id="emailInput" placeholder="—">
                 </div>
                 <div class="form-row full">
                     <label class="form-label">Address</label>
-                    <input type="text" placeholder="—">
+                    <input type="text" id="addressInput" placeholder="—">
                 </div>
             </div>
 
@@ -178,7 +178,7 @@ HTML_PAGE = """
             </div>
         </div>
 
-        <div class="panel" style="flex: 0.25;">
+        <div class="panel" id="customerInsightsPanel" style="flex: 0.25; display: none;">
             <div class="panel-header">
                 <div class="panel-title">Customer Insights</div>
                 <button style="background: none; border: none; cursor: pointer; font-size: 16px;">✕</button>
@@ -186,7 +186,7 @@ HTML_PAGE = """
 
             <div class="insights-section">
                 <div style="padding: 8px 0; border-bottom: 1px solid #e0e0e0; margin-bottom: 8px;">
-                    <div style="font-size: 12px; font-weight: 600; color: #666;">ABC SUPPLY</div>
+                    <div id="customerNameDisplay" style="font-size: 12px; font-weight: 600; color: #666;"></div>
                 </div>
 
                 <div class="alert-box">
@@ -292,7 +292,28 @@ async function submitPaste() {
             // Set up message handler for results
             ws.onmessage = (e) => {
                 const msg = JSON.parse(e.data);
-                if (msg.type === 'parts') {
+                if (msg.type === 'customer_info') {
+                    const data = msg.data;
+                    if (data.company_name) {
+                        document.getElementById('companyNameInput').value = data.company_name;
+                        document.getElementById('customerNameDisplay').textContent = data.company_name.toUpperCase();
+                        // Switch to 20% / 55% / 25% layout when company name identified
+                        document.getElementById('quotePanel').style.flex = '0.55';
+                        document.getElementById('customerInsightsPanel').style.display = 'flex';
+                    }
+                    if (data.associate_name) {
+                        document.getElementById('associateNameInput').value = data.associate_name;
+                    }
+                    if (data.po_number) {
+                        document.getElementById('poNumberInput').value = data.po_number;
+                    }
+                    if (data.email) {
+                        document.getElementById('emailInput').value = data.email;
+                    }
+                    if (data.address) {
+                        document.getElementById('addressInput').value = data.address;
+                    }
+                } else if (msg.type === 'parts') {
                     const tbody = document.getElementById('tbody');
                     msg.items.forEach(item => {
                         if (item && item.item_id && !seenIds.has(item.item_id)) {
@@ -668,9 +689,26 @@ async def websocket_endpoint(browser_ws: WebSocket):
                         text = msg.get('text', '')
                         if text:
                             print(f'[PASTED] {text}')
-                            # Extract parts from pasted text
-                            parts = extract_part_names(text)
-                            if parts:
+
+                            # Extract both customer info and part names
+                            extracted_data = extract_transcript_data(text)
+
+                            # Send customer info if any field is available
+                            if any(extracted_data.get(key) for key in ['company_name', 'associate_name', 'po_number', 'email', 'address']):
+                                customer_info = {
+                                    'company_name': extracted_data.get('company_name'),
+                                    'associate_name': extracted_data.get('associate_name'),
+                                    'po_number': extracted_data.get('po_number'),
+                                    'email': extracted_data.get('email'),
+                                    'address': extracted_data.get('address')
+                                }
+                                send_queue.put({'type': 'customer_info', 'data': customer_info})
+
+                            # Extract and match parts
+                            item_names = extracted_data.get('item_names', [])
+                            if item_names:
+                                # Convert item_names to part_names format for call_top
+                                parts = [{'part_name': item['item_name'], 'quantity': item.get('quantity', 1)} for item in item_names]
                                 matched = call_top(parts)
                                 new_items = []
 
@@ -727,15 +765,27 @@ async def websocket_endpoint(browser_ws: WebSocket):
         print('Connection closed')
 
 
-def extract_part_names(transcript: str):
-    """Extract part names and quantities from transcript using GPT"""
+def extract_transcript_data(transcript: str):
+    """Extract both customer info and part names from transcript"""
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini-2024-07-18",
             messages=[
                 {
                     "role": "system",
-                    "content": 'Extract part names and quantities from the transcript. Return only a JSON array with objects like [{"part_name":"part1","quantity":2},{"part_name":"part2","quantity":1}]. If quantity is not mentioned, default to 1. No backticks or markdown.'
+                    "content": '''Extract customer information and part names from the transcript. Return only a JSON object with this structure:
+{
+  "company_name": string or null,
+  "associate_name": string or null,
+  "po_number": string or null,
+  "email": string or null,
+  "address": string or null,
+  "item_names": [
+    {"item_name": "part1", "quantity": 2},
+    {"item_name": "part2", "quantity": 1}
+  ]
+}
+Leave customer fields as null if not mentioned. If no items found, item_names is empty array. Default quantity to 1 if not mentioned. No backticks or markdown.'''
                 },
                 {"role": "user", "content": transcript}
             ]
@@ -745,7 +795,7 @@ def extract_part_names(transcript: str):
         return extracted
     except Exception as e:
         print(f'Extract error: {e}')
-        return []
+        return {"company_name": None, "associate_name": None, "po_number": None, "email": None, "address": None, "item_names": []}
 
 
 def call_top(parts_with_qty: list, k: int = 10):
@@ -825,6 +875,7 @@ def map_results_to_resolution_prompt(row_of_ixs: List[int], item_name: str):
 
     {df.iloc[row_of_ixs].reset_index(drop=True).reset_index().to_json(orient='records',indent=4)}
 
-    If one of them are what the user asked for, output its index as an int, 0-9. Otherwise, output the string "NONE". E.g., the user could have said "two-and-a-half inch fire lock T", and that would match "2 1/2 FIRELOCK TEE", so if it had index=5, you would output 5. Please don't output an index unless there is a strong semantic match. Other examples: query "three-quarter inch chrome up cut chin" would match "3/4 Chrome Cup 401 Escutcheon" because they sound the same (transcription isn't perfect), query "half-inch gate valve whole part" would match "1/2 BRZ GATE VLV TE FULL PRT". One bug that you run into is matching user query "b" to part name "2 1\\/2 FIRELOCK TEE", which doesn't make sense, don't do that. Another false positive you made was that the user said "any free system 6x2" and you matched "SIGN - BLANK 6 X 2", nice job on the 6x2 but the rest doesn't match enough. Here is another error that you made. The transcript said "I want an antifreeze system, six by two. I want two antifreeze systems, five by seven" and you extracted part_name=antifreeze system quantity=2 and part_name=antifreeze system quantity=1, but really you should have included the 6X2 and 5X7 in the part names. Here's another error, the transcript said "I wonder if I can have...21 over 2 inch, 2000 SS, LF, Aussie, FXG", though that was the customer trying to describe 21/2" 2000SS LF OSY FXG, so as you can see, the transcript will often include commas in between words, because part numbers are compound, and unlike normal language, but you should look past this, and if a series of words with commas in between looks like it should be one part, try to only extract one part. Another error you made was that the item name was "valve", which was very generic and shouldn't have been matched to more specific part names, but it was matched to "VALVE, 05781AJ,VALVE", a very specific part name, which is incorrect, since there are many valves in the dataset, so the general rule is to not match a fully generic word to a part name with some specific identifiers.
+    If one of them are what the user asked for, output its index as an int, 0-9. Otherwise, output the string "NONE". E.g., the user could have said "two-and-a-half inch fire lock T", and that would match "2 1/2 FIRELOCK TEE", so if it had index=5, you would output 5. Please don't output an index unless there is a strong semantic match. Other examples: query "three-quarter inch chrome up cut chin" would match "3/4 Chrome Cup 401 Escutcheon" because they sound the same (transcription isn't perfect), query "half-inch gate valve whole part" would match "1/2 BRZ GATE VLV TE FULL PRT". One bug that you run into is matching user query "b" to part name "2 1\\/2 FIRELOCK TEE", which doesn't make sense, don't do that. Another false positive you made was that the user said "any free system 6x2" and you matched "SIGN - BLANK 6 X 2", nice job on the 6x2 but the rest doesn't match enough. Here is another error that you made. The transcript said "I want an antifreeze system, six by two. I want two antifreeze systems, five by seven" and you extracted part_name=antifreeze system quantity=2 and part_name=antifreeze system quantity=1, but really you should have included the 6X2 and 5X7 in the part names. Here's another error, the transcript said "I wonder if I can have...21 over 2 inch, 2000 SS, LF, Aussie, FXG", though that was the customer trying to describe 21/2" 2000SS LF OSY FXG, so as you can see, the transcript will often include commas in between words, because part numbers are compound, and unlike normal language, but you should look past this, and if a series of words with commas in between looks like it should be one part, try to only extract one part.
     """
     return prompt
+# Sample: Hi could I get four 11 quarter inch double check backflow less valves? I'm Reed calling from ABC Supply. Order number 1920219052190, reed@abc.co.uk, 775 Surrey Lane, London UK. Also three 11 over 4 double check quart FZs.
