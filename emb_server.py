@@ -262,14 +262,16 @@ HTML_PAGE = """
 const SAMPLE_RATE = 24000;
 let ws, audioContext, processor, source, stream;
 let recording = false;
+let muted = false;
 let matchCount = 0;
 let startTime = 0;
 const seenIds = new Set();
 
 document.getElementById('recordBtn').onclick = toggle;
 document.getElementById('muteBtn').onclick = () => {
+    muted = !muted;
     const btn = document.getElementById('muteBtn');
-    btn.textContent = btn.textContent === '🔊' ? '🔇' : '🔊';
+    btn.textContent = muted ? '🔇' : '🔊';
 };
 
 async function submitPaste() {
@@ -277,17 +279,69 @@ async function submitPaste() {
     const text = input.value.trim();
     if (!text) return;
 
-    // Start recording if not already recording
-    if (!recording) {
-        await startRecording();
-        // Wait for connection
-        await new Promise(r => setTimeout(r, 200));
-    }
+    // Connect if not already connected
+    if (!ws || ws.readyState !== 1) {
+        try {
+            ws = new WebSocket('ws://' + location.host + '/ws');
+            await new Promise((resolve, reject) => {
+                ws.onopen = resolve;
+                ws.onerror = reject;
+                setTimeout(() => reject(new Error('Timeout')), 5000);
+            });
 
-    // Check if ws is open
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-        console.error('WebSocket not connected');
-        return;
+            // Set up message handler for results
+            ws.onmessage = (e) => {
+                const msg = JSON.parse(e.data);
+                if (msg.type === 'parts') {
+                    const tbody = document.getElementById('tbody');
+                    msg.items.forEach(item => {
+                        if (item && item.item_id && !seenIds.has(item.item_id)) {
+                            seenIds.add(item.item_id);
+                            const row = document.createElement('div');
+                            row.className = 'table-row';
+
+                            const itemName = document.createElement('div');
+                            itemName.className = 'item-name';
+                            itemName.textContent = item.part_name || '';
+
+                            const itemId = document.createElement('div');
+                            itemId.className = 'item-id';
+                            itemId.textContent = item.item_id;
+
+                            const desc = document.createElement('div');
+                            desc.textContent = item.description || '';
+
+                            const crossSell = document.createElement('div');
+                            if (item.cross_sell_suggestions && item.cross_sell_suggestions.length > 0) {
+                                const firstSugg = item.cross_sell_suggestions[0];
+                                const link = document.createElement('span');
+                                link.className = 'cross-sell-indicator';
+                                link.textContent = (firstSugg.item_id || '') + (item.cross_sell_suggestions.length > 1 ? ` (+${item.cross_sell_suggestions.length - 1})` : '');
+                                link.onclick = () => showCrossSellModal(item.part_name, item.cross_sell_suggestions);
+                                crossSell.appendChild(link);
+                            }
+
+                            const mfg = document.createElement('div');
+                            mfg.textContent = item.manufacturer_name || '';
+
+                            const qty = document.createElement('div');
+                            qty.textContent = item.quantity || '1';
+
+                            row.appendChild(itemName);
+                            row.appendChild(itemId);
+                            row.appendChild(desc);
+                            row.appendChild(crossSell);
+                            row.appendChild(mfg);
+                            row.appendChild(qty);
+                            tbody.insertBefore(row, tbody.firstChild);
+                        }
+                    });
+                }
+            };
+        } catch (err) {
+            console.error('Failed to connect:', err);
+            return;
+        }
     }
 
     // Append to transcript
@@ -349,9 +403,6 @@ document.getElementById('crossSellModal').onclick = (e) => {
 };
 
 async function startRecording() {
-    document.getElementById('transcript').textContent = '';
-    document.getElementById('tbody').innerHTML = '';
-    seenIds.clear();
     document.getElementById('recordBtn').classList.add('recording');
 
     try {
@@ -433,7 +484,7 @@ async function startRecording() {
         processor = audioContext.createScriptProcessor(4096, 1, 1);
 
         processor.onaudioprocess = (e) => {
-            if (!recording || ws.readyState !== WebSocket.OPEN) return;
+            if (!recording || muted || ws.readyState !== WebSocket.OPEN) return;
             const float32 = e.inputBuffer.getChannelData(0);
             const int16 = new Int16Array(float32.length);
             for (let i = 0; i < float32.length; i++) {
@@ -661,7 +712,7 @@ async def websocket_endpoint(browser_ws: WebSocket):
                     'audio': encoded
                 }))
             except Exception as e:
-                print(f'Browser receive error: {e}')
+                # Silently break on disconnect - this is normal when client closes connection
                 break
 
     except Exception as e:
@@ -774,6 +825,6 @@ def map_results_to_resolution_prompt(row_of_ixs: List[int], item_name: str):
 
     {df.iloc[row_of_ixs].reset_index(drop=True).reset_index().to_json(orient='records',indent=4)}
 
-    If one of them are what the user asked for, output its index as an int, 0-9. Otherwise, output the string "NONE". E.g., the user could have said "two-and-a-half inch fire lock T", and that would match "2 1/2 FIRELOCK TEE", so if it had index=5, you would output 5. Please don't output an index unless there is a strong semantic match. Other examples: query "three-quarter inch chrome up cut chin" would match "3/4 Chrome Cup 401 Escutcheon" because they sound the same (transcription isn't perfect), query "half-inch gate valve whole part" would match "1/2 BRZ GATE VLV TE FULL PRT". One bug that you run into is matching user query "b" to part name "2 1\\/2 FIRELOCK TEE", which doesn't make sense, don't do that. Another false positive you made was that the user said "any free system 6x2" and you matched "SIGN - BLANK 6 X 2", nice job on the 6x2 but the rest doesn't match enough. Here is another error that you made. The transcript said "I want an antifreeze system, six by two. I want two antifreeze systems, five by seven" and you extracted part_name=antifreeze system quantity=2 and part_name=antifreeze system quantity=1, but really you should have included the 6X2 and 5X7 in the part names. Here's another error, the transcript said "I wonder if I can have...21 over 2 inch, 2000 SS, LF, Aussie, FXG", though that was the customer trying to describe 21/2" 2000SS LF OSY FXG, so as you can see, the transcript will often include commas in between words, because part numbers are compound, and unlike normal language, but you should look past this, and if a series of words with commas in between looks like it should be one part, try to only extract one part.
+    If one of them are what the user asked for, output its index as an int, 0-9. Otherwise, output the string "NONE". E.g., the user could have said "two-and-a-half inch fire lock T", and that would match "2 1/2 FIRELOCK TEE", so if it had index=5, you would output 5. Please don't output an index unless there is a strong semantic match. Other examples: query "three-quarter inch chrome up cut chin" would match "3/4 Chrome Cup 401 Escutcheon" because they sound the same (transcription isn't perfect), query "half-inch gate valve whole part" would match "1/2 BRZ GATE VLV TE FULL PRT". One bug that you run into is matching user query "b" to part name "2 1\\/2 FIRELOCK TEE", which doesn't make sense, don't do that. Another false positive you made was that the user said "any free system 6x2" and you matched "SIGN - BLANK 6 X 2", nice job on the 6x2 but the rest doesn't match enough. Here is another error that you made. The transcript said "I want an antifreeze system, six by two. I want two antifreeze systems, five by seven" and you extracted part_name=antifreeze system quantity=2 and part_name=antifreeze system quantity=1, but really you should have included the 6X2 and 5X7 in the part names. Here's another error, the transcript said "I wonder if I can have...21 over 2 inch, 2000 SS, LF, Aussie, FXG", though that was the customer trying to describe 21/2" 2000SS LF OSY FXG, so as you can see, the transcript will often include commas in between words, because part numbers are compound, and unlike normal language, but you should look past this, and if a series of words with commas in between looks like it should be one part, try to only extract one part. Another error you made was that the item name was "valve", which was very generic and shouldn't have been matched to more specific part names, but it was matched to "VALVE, 05781AJ,VALVE", a very specific part name, which is incorrect, since there are many valves in the dataset, so the general rule is to not match a fully generic word to a part name with some specific identifiers.
     """
     return prompt
