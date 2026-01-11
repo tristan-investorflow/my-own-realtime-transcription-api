@@ -439,6 +439,27 @@ async function startRecording() {
             const msg = JSON.parse(e.data);
             if (msg.type === 'transcript') {
                 document.getElementById('transcript').textContent += msg.text;
+            } else if (msg.type === 'customer_info') {
+                const data = msg.data;
+                if (data.company_name) {
+                    document.getElementById('companyNameInput').value = data.company_name;
+                    document.getElementById('customerNameDisplay').textContent = data.company_name.toUpperCase();
+                    // Switch to 20% / 55% / 25% layout when company name identified
+                    document.getElementById('quotePanel').style.flex = '0.55';
+                    document.getElementById('customerInsightsPanel').style.display = 'flex';
+                }
+                if (data.associate_name) {
+                    document.getElementById('associateNameInput').value = data.associate_name;
+                }
+                if (data.po_number) {
+                    document.getElementById('poNumberInput').value = data.po_number;
+                }
+                if (data.email) {
+                    document.getElementById('emailInput').value = data.email;
+                }
+                if (data.address) {
+                    document.getElementById('addressInput').value = data.address;
+                }
             } else if (msg.type === 'parts') {
                 const tbody = document.getElementById('tbody');
                 msg.items.forEach(item => {
@@ -594,12 +615,27 @@ async def websocket_endpoint(browser_ws: WebSocket):
                             send_queue.put({'type': 'transcript', 'text': delta})
 
                     elif event_type == 'conversation.item.input_audio_transcription.completed':
-                        # Transcription complete - extract parts and match
+                        # Transcription complete - extract customer info and parts
                         full_transcript = ''.join(transcript_text)
                         if full_transcript.strip():
                             try:
-                                parts = extract_part_names(full_transcript)
-                                if parts:
+                                extracted_data = extract_transcript_data(full_transcript)
+
+                                # Send customer info if any field is available
+                                if any(extracted_data.get(key) for key in ['company_name', 'associate_name', 'po_number', 'email', 'address']):
+                                    customer_info = {
+                                        'company_name': extracted_data.get('company_name'),
+                                        'associate_name': extracted_data.get('associate_name'),
+                                        'po_number': extracted_data.get('po_number'),
+                                        'email': extracted_data.get('email'),
+                                        'address': extracted_data.get('address')
+                                    }
+                                    send_queue.put({'type': 'customer_info', 'data': customer_info})
+
+                                # Extract and match parts
+                                item_names = extracted_data.get('item_names', [])
+                                if item_names:
+                                    parts = [{'part_name': item['item_name'], 'quantity': item.get('quantity', 1)} for item in item_names]
                                     matched = call_top(parts)
                                     new_items = []
                                     def convert_value(v):
@@ -879,3 +915,4 @@ def map_results_to_resolution_prompt(row_of_ixs: List[int], item_name: str):
     """
     return prompt
 # Sample: Hi could I get four 11 quarter inch double check backflow less valves? I'm Reed calling from ABC Supply. Order number 1920219052190, reed@abc.co.uk, 775 Surrey Lane, London UK. Also three 11 over 4 double check quart FZs.
+# Sample: Hi, how are you?Hi, can I get four 11 1⁄4-inch double check backflow-less valves?أنا ريدMy name is Reid.I'm calling from ABC Supply.Yeah, I'm talking about order number 1920-2190-52-190.Yeah, email is reid.abc.co.uk and I'm at 775 Surrey Lane in London, UK.Could I also get three 11 over four double check court FZs?
