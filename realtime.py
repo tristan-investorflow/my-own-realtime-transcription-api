@@ -155,8 +155,20 @@ ANGLE WALL POST KIT FIG 551 B
         try:
             with urllib.request.urlopen(req) as resp:
                 result = json.loads(resp.read().decode('utf-8'))
-                parts = result['choices'][0]['message']['content']
-                print(f'\n[PARTS] {parts}\n')
+                parts_str = result['choices'][0]['message']['content']
+                print(f'\n[PARTS] {parts_str}')
+
+                # Parse the JSON array and send to local API
+                parts_list = json.loads(parts_str)
+                if parts_list:
+                    top_req = urllib.request.Request(
+                        'http://127.0.0.1:8000/top',
+                        data=json.dumps(parts_list).encode('utf-8'),
+                        headers={'Content-Type': 'application/json'}
+                    )
+                    with urllib.request.urlopen(top_req) as top_resp:
+                        top_result = json.loads(top_resp.read().decode('utf-8'))
+                        print(f'[TOP] {json.dumps(top_result, indent=2)}\n')
         except Exception as e:
             print(f'Extract error: {e}')
 
