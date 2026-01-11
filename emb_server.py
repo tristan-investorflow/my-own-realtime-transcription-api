@@ -411,7 +411,7 @@ async def websocket_endpoint(browser_ws: WebSocket):
                                     new_items = []
                                     for item in matched:
                                         if item is not None:
-                                            d = item.to_dict() if hasattr(item, 'to_dict') else item
+                                            d = item if isinstance(item, dict) else item.to_dict()
                                             # Convert NaN to None for JSON compatibility
                                             d = {k: (None if pd.isna(v) else v) for k, v in d.items()}
                                             if d.get('item_id') and d['item_id'] not in seen_item_ids:
@@ -490,27 +490,33 @@ async def websocket_endpoint(browser_ws: WebSocket):
         print('Connection closed')
 
 
-def extract_part_names(transcript: str) -> List[str]:
-    """Extract part names from transcript using GPT"""
+def extract_part_names(transcript: str):
+    """Extract part names and quantities from transcript using GPT"""
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini-2024-07-18",
             messages=[
                 {
                     "role": "system",
-                    "content": 'Extract part names from the transcript. Return only a JSON array of strings, no backticks. Example: ["part1", "part2"]'
+                    "content": 'Extract part names and quantities from the transcript. Return only a JSON array with objects like [{"part_name":"part1","quantity":2},{"part_name":"part2","quantity":1}]. If quantity is not mentioned, default to 1. No backticks or markdown.'
                 },
                 {"role": "user", "content": transcript}
             ]
         )
-        return json.loads(response.choices[0].message.content)
+        extracted = json.loads(response.choices[0].message.content)
+        print(f'[EXTRACTED] {json.dumps(extracted)}')
+        return extracted
     except Exception as e:
         print(f'Extract error: {e}')
         return []
 
 
-def call_top(item_names: List[str], k: int = 10):
-    """Call the top matching logic - same as original"""
+def call_top(parts_with_qty: list, k: int = 10):
+    """Call the top matching logic with part names and quantities"""
+    # Extract just the part names for embedding
+    item_names = [p['part_name'] for p in parts_with_qty]
+    quantities = [p.get('quantity', 1) for p in parts_with_qty]
+
     embs_query = np.array(embed(item_names)).T
     scores = embs_arr @ embs_query
     top_indices = np.argpartition(scores, -k, axis=0)[-k:]
@@ -524,14 +530,28 @@ def call_top(item_names: List[str], k: int = 10):
     indices_in_df = [int(top_indices[z, i]) if z is not None else None
                      for i, z in enumerate(postprocessed)]
     matched_df_rows = [df.iloc[z] if z is not None else None for z in indices_in_df]
-    return matched_df_rows
+
+    # Add quantity to each matched row
+    result = []
+    for row, qty in zip(matched_df_rows, quantities):
+        if row is not None:
+            row_dict = row.to_dict() if hasattr(row, 'to_dict') else row
+            row_dict['quantity'] = qty
+            result.append(row_dict)
+        else:
+            result.append(None)
+
+    print(f'[MATCHED] {json.dumps(result, default=str, indent=2)}')
+    return result
 
 
 # ============== ORIGINAL ENDPOINTS ==============
 
 @app.post("/top")
 async def top_endpoint(item_names: List[str], k: int = 10):
-    return call_top(item_names, k)
+    # Convert to new format with default quantities
+    parts = [{"part_name": name, "quantity": 1} for name in item_names]
+    return call_top(parts, k)
 
 
 def embed(lst: List[str]):
